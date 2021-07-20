@@ -24,14 +24,13 @@ This implementation relies on [torchtext](https://github.com/pytorch/text) to mi
 * torchtext
 * Spacy
 * numpy
-
+refer to envname.yaml
 download tokenizers by doing so:
 ```
-python -m spacy download de_core_news_sm
 python -m spacy download en_core_web_sm
 ```
 
-
+CUDA_VISIBLE_DEVICES=1 python train.py
 ## References
 
 Based on the following implementations

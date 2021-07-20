@@ -4,7 +4,7 @@ from utils import *
 import torch
 import pprint
 from model import *
-
+#torch.inverse(matrix.cpu()).cuda()
 
 # tensorboard --logdir logs --port 6007 --host 0.0.0.0
 
@@ -66,11 +66,11 @@ def main():
                      teacher_forcing_ratio=model_[
                          'seq2seq']['teacher_forcing_ratio'],
                      learning_rate=hyperparams_[
-                         'learning_rate'], 
+                         'learning_rate'],
                      grad_clip=hyperparams_['grad_clip'], patience=model_['patience'], min_delta=model_['min_delta'])
-    model.train_epoch(n_epochs=hyperparams_['epochs'], train_iter=trainprocess.data_iter, val_iter=validprocess.data_iter,
-                      save_model_path=model_['save'])
-    model.lazy_load(model_['save'])
+    # model.train_epoch(n_epochs=hyperparams_['epochs'], train_iter=trainprocess.data_iter, val_iter=validprocess.data_iter,
+     #                 save_model_path=model_['save'])
+    model.lazyload(model_['save'])
     test_loss = model.evaluate(val_iter=testprocess.data_iter)
     print("[TEST] loss:%5.2f" % test_loss)
 
