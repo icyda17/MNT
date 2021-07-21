@@ -9,9 +9,41 @@ import joblib
 from tqdm import tqdm
 import html
 import os
+import yaml
+import pprint
 from torch.nn.utils.rnn import pad_sequence
 
 en_tokenizer = get_tokenizer('spacy', language='en_core_web_sm')
+
+
+class ReadConfig():
+    def __init__(self):
+        cfg = self.read_config()
+        self.vocab_size = cfg['params']['vocab_size']
+        self.src_vocab_dir, self.trg_vocab_dir = cfg['data']['vocab']
+        self.embed_size = cfg['params']['embed_size']
+        self.hidden_size = cfg['params']['hidden_size']
+        self.n_layers_encoder = cfg['model']['encoder']['n_layers']
+        self.n_layers_decoder = cfg['model']['decoder']['n_layers']
+        self.dropout_encoder = cfg['model']['encoder']['dropout']
+        self.dropout_decoder = cfg['model']['decoder']['dropout']
+        self.teacher_forcing_ratio = cfg['model']['seq2seq']['teacher_forcing_ratio']
+        self.learning_rate = cfg['hyperparams']['learning_rate']
+        self.grad_clip = cfg['hyperparams']['grad_clip']
+        self.patience = cfg['model']['patience']
+        self.min_delta = cfg['model']['min_delta']
+        self.path_model = cfg['model']['save']
+        self.max_len = cfg['params']['max_len']
+        self.beamsearch = cfg['predictor']['beamsearch']
+
+    def read_config(self, path="config/config_model.yaml", print=False):
+        path_cur = os.path.dirname(os.path.abspath(__file__))  # project path
+        with open(os.path.join(path_cur, path)) as fp:
+            config = yaml.load(fp, Loader=yaml.FullLoader)
+            if print:
+                pp = pprint.PrettyPrinter(indent=2)
+                pp.pprint(config)
+        return config
 
 
 def vi_tokenizer(text: str):
@@ -79,7 +111,7 @@ class ReadVocab():
             self.counter_trg.update(ite[1])
         if sum(self.counter_src.values()) < self.vocab_size:
             self.vocab_src = Vocab(
-                self.counter_src, max_size=None,specials=self.specials_token)
+                self.counter_src, max_size=None, specials=self.specials_token)
         else:
             self.vocab_src = Vocab(
                 self.counter_src, self.vocab_size, specials=self.specials_token)
@@ -125,7 +157,7 @@ class ProcessData():
                 if not os.path.isdir("data/vocab"):
                     os.makedirs("data/vocab")
                 vocabinit.save_vocab(src_vocab_dir, trg_vocab_dir)
-             
+
             else:
                 vocabinit.load_vocab(src_vocab_dir, trg_vocab_dir)
             self.vocab_src = vocabinit.vocab_src
@@ -133,22 +165,22 @@ class ProcessData():
             self.src_vocab_size, self.trg_vocab_size = len(
                 self.vocab_src), len(self.vocab_trg)
             print("[%s_vocab]:%d [%s_vocab]:%d" % (vocabinit.name[0],
-                                                   self.src_vocab_size, vocabinit.name[1], self.trg_vocab_size))                   
+                                                   self.src_vocab_size, vocabinit.name[1], self.trg_vocab_size))
             self.data_prc = datainit.process(
-                vocabinit.vocab_src, vocabinit.vocab_trg)   
-            
+                vocabinit.vocab_src, vocabinit.vocab_trg)
+
             if save_dir:
                 print("[Saving] Processed data...")
                 if not os.path.isdir("data/processed"):
                     os.makedirs("data/processed")
                 joblib.dump(self.data_prc, save_dir)
-                
+
         self.vocab_src = vocabinit.vocab_src
         self.vocab_trg = vocabinit.vocab_trg
         self.src_vocab_size, self.trg_vocab_size = len(
             self.vocab_src), len(self.vocab_trg)
         print("[%s_vocab]:%d [%s_vocab]:%d" % (vocabinit.name[0],
-                                               self.src_vocab_size, vocabinit.name[1], self.trg_vocab_size))   
+                                               self.src_vocab_size, vocabinit.name[1], self.trg_vocab_size))
         self.data_iter = DataLoader(self.data_prc, batch_size=batch_size,
                                     shuffle=True, collate_fn=self.generate_batch)
 

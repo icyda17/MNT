@@ -30,3 +30,10 @@ model:
     save: 'save/seq2seq.pt'
     patience: 5
     min_delta: 0.0
+
+predictor:
+    beamsearch: True
+    beam_size: 4
+    candidates: 1
+    sos_token: 2
+    eos_token: 3

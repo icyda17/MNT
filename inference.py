@@ -2,7 +2,6 @@ from utils import *
 from model import *
 
 
-
 class Inference():
 
     def __init__(self, device, max_len):
@@ -26,7 +25,7 @@ class Inference():
         prep = en_tokenizer(preprocess(text))
         assert len(prep) <= self.max_len, "Exceed max length: %s" % self.max_len
         prep = [self.vocab.vocab_src['<sos>']]+[self.vocab.vocab_src[token]
-                                              for token in prep]+[self.vocab.vocab_src['<eos>']]
+                                                for token in prep]+[self.vocab.vocab_src['<eos>']]
         post = torch.tensor(prep, dtype=torch.long)
         post = pad_sequence(
             [post], padding_value=self.vocab.vocab_src['<pad>'])
@@ -55,6 +54,7 @@ class BeamSearch():
         self.sequences = [[list(), 0.0]]
         self.alpha = alpha
         self.out = None
+
     def execute(self, data):
         data = data.squeeze(1).cpu().detach().numpy()
         # walk over each step in sequence
@@ -75,12 +75,13 @@ class BeamSearch():
                 all_candidates, key=lambda tup: tup[1], reverse=True)
             # select k best
             self.sequences = ordered[:self.k]
+
     def refine(self):
         for i in range(len(self.sequences)):
-            ty=0
+            ty = 0
             for j in self.sequences[i][0]:
-                ty+=1
+                ty += 1
                 if j == 3:
                     self.sequences[i][1] /= (ty**self.alpha)
         self.out = sorted(
-                self.sequences, key=lambda tup: tup[1], reverse=True)[0]
+            self.sequences, key=lambda tup: tup[1], reverse=True)[0]
