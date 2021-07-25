@@ -8,9 +8,17 @@ import torch.nn.functional as F
 from torch.nn.utils import clip_grad_norm_
 import numpy as np
 import time
-from reporter import Reporter
+# from reporter import Reporter
 import os
 from tqdm import tqdm
+from util.log import timeit
+from queue import PriorityQueue
+import operator
+
+
+SOS_token = 2
+EOS_token = 3
+MAX_LENGTH = 100
 
 
 class Encoder(nn.Module):
@@ -25,7 +33,9 @@ class Encoder(nn.Module):
                           dropout=dropout, bidirectional=True)
 
     def forward(self, src, hidden=None):
+        # src: TxB -> embed: TxBxEmbed size (input_size)
         embedded = self.embed(src)
+        # out: TxBx(hidden_size*n_layers) , hidden: (2*n_layers)xBxhidden_size
         outputs, hidden = self.gru(embedded, hidden)
         # sum bidirectional outputs
         outputs = (outputs[:, :, :self.hidden_size] +
@@ -76,10 +86,11 @@ class Decoder(nn.Module):
 
     def forward(self, input, last_hidden, encoder_outputs):
         # Get the embedding of the current input word (last output word)
-        embedded = self.embed(input).unsqueeze(0)  # (1,B,N)
+        embedded = self.embed(input).unsqueeze(0)  # (1,B,H)
         embedded = self.dropout(embedded)
         # Calculate attention weights and apply to encoder outputs
-        attn_weights = self.attention(last_hidden[-1], encoder_outputs)
+        attn_weights = self.attention(
+            last_hidden[-1], encoder_outputs)  # (B,1,N)
         context = attn_weights.bmm(encoder_outputs.transpose(0, 1))  # (B,1,N)
         context = context.transpose(0, 1)  # (1,B,N)
         # Combine embedded input word and attended context, run through RNN
@@ -113,8 +124,8 @@ class Seq2Seq(nn.Module):
         outputs = Variable(torch.zeros(max_len, batch_size, vocab_size)).to(
             self.device)  # T*B*V
 
-        encoder_output, hidden = self.encoder(src)  # T*B*H
-        hidden = hidden[:self.decoder.n_layers]
+        encoder_output, hidden = self.encoder(src)  # T*B*H, 2*n_layersxBxH
+        hidden = hidden[:self.decoder.n_layers]  # n_decoder_layersxBxH
         try:
             output = Variable(trg.data[0, :])  # sos # B
         except:
@@ -123,7 +134,7 @@ class Seq2Seq(nn.Module):
 
         for t in range(1, max_len):
             output, hidden, attn_weights = self.decoder(
-                output, hidden, encoder_output)
+                output, hidden, encoder_output)  # output: BxV, hidden: 1xBxH, encoder: TxBxH
             outputs[t] = output
             if self.teacher_forcing_ratio == 1:
                 is_teacher = False
@@ -133,6 +144,175 @@ class Seq2Seq(nn.Module):
             output = Variable(
                 trg.data[t] if is_teacher else top1).to(self.device)
         return outputs
+
+    def decode(self, src, trg, beam_size, method='beam-search'):
+        # [27, 32]=> =>[27, 32, 512],[4, 32, 512]
+        encoder_output, hidden = self.encoder(src)
+        hidden = hidden[:self.decoder.n_layers]  # [4, 32, 512][1, 32, 512]
+        if method == 'beam-search':
+            return self.beam_decode(trg, hidden, beam_size, encoder_output)
+        else:
+            return self.greedy_decode(trg, hidden, encoder_output)
+
+    def greedy_decode(self, trg, decoder_hidden, encoder_outputs, ):
+        '''
+        :param target_tensor: target indexes tensor of shape [B, T] where B is the batch size and T is the maximum length of the output sentence
+        :param decoder_hidden: input tensor of shape [1, B, H] for start of the decoding
+        :param encoder_outputs: if you are using attention mechanism you can pass encoder outputs, [T, B, H] where T is the maximum length of input sentence
+        :return: decoded_batch
+        '''
+        seq_len, batch_size = trg.size()
+        decoded_batch = torch.zeros((batch_size, seq_len))
+        # decoder_input = torch.LongTensor([[EN.vocab.stoi['<sos>']] for _ in range(batch_size)]).cuda()
+        decoder_input = Variable(trg.data[0, :]).to(self.device)  # sos
+        print(decoder_input.shape)
+        for t in range(seq_len):
+            decoder_output, decoder_hidden, _ = self.decoder(
+                decoder_input, decoder_hidden, encoder_outputs)
+
+            topv, topi = decoder_output.data.topk(
+                1)  # [32, 10004] get candidates
+            topi = topi.view(-1)
+            decoded_batch[:, t] = topi
+
+            decoder_input = topi.detach().view(-1)
+
+        return decoded_batch
+
+    # @timeit
+    def beam_decode(self, target_tensor, decoder_hiddens, beam_size, encoder_outputs=None):
+        '''
+        :param target_tensor: target indexes tensor of shape [B, T] where B is the batch size and T is the maximum length of the output sentence
+        :param decoder_hiddens: input tensor of shape [1, B, H] for start of the decoding
+        :param encoder_outputs: if you are using attention mechanism you can pass encoder outputs, [T, B, H] where T is the maximum length of input sentence
+        :return: decoded_batch
+        '''
+        if isinstance(target_tensor, int):
+            batch_size = decoder_hiddens.size(1)
+        else:
+            target_tensor = target_tensor.permute(1, 0)
+            batch_size = target_tensor.size(0)
+        beam_size = beam_size
+        topk = 1  # how many sentence do you want to generate
+        decoded_batch = []
+
+        # decoding goes sentence by sentence
+        for idx in range(batch_size):  # batch_size
+            if isinstance(decoder_hiddens, tuple):  # LSTM case
+                decoder_hidden = (
+                    decoder_hiddens[0][:, idx, :].unsqueeze(0), decoder_hiddens[1][:, idx, :].unsqueeze(0))
+            else:
+                decoder_hidden = decoder_hiddens[:, idx, :].unsqueeze(
+                    0)  # [1, B, H]=>[1,H]=>[1,1,H]
+            encoder_output = encoder_outputs[:, idx, :].unsqueeze(
+                1)  # [T,B,H]=>[T,H]=>[T,1,H]
+
+            # Start with the start of the sentence token
+            decoder_input = torch.LongTensor([SOS_token]).to(self.device)
+
+            # Number of sentence to generate
+            endnodes = []
+            number_required = min((topk + 1), topk - len(endnodes))
+
+            # starting node -  hidden vector, previous node, word id, logp, length
+            node = BeamSearchNode(decoder_hidden, None, decoder_input, 0, 1)
+            nodes = PriorityQueue()
+
+            # start the queue
+            nodes.put((-node.eval(), node))
+            qsize = 1
+
+            # start beam search
+            while True:
+                # give up when decoding takes too long
+                if qsize > 2000:
+                    break
+
+                # fetch the best node
+                score, n = nodes.get()
+                # print('--best node seqs len {} '.format(n.leng))
+                decoder_input = n.wordid
+                decoder_hidden = n.h
+
+                if n.wordid.item() == EOS_token and n.prevNode != None:
+                    endnodes.append((score, n))
+                    # if we reached maximum # of sentences required
+                    if len(endnodes) >= number_required:
+                        break
+                    else:
+                        continue
+
+                # decode for one step using decoder
+                decoder_output, decoder_hidden, _ = self.decoder(
+                    decoder_input, decoder_hidden, encoder_output)
+
+                # PUT HERE REAL BEAM SEARCH OF TOP
+                log_prob, indexes = torch.topk(decoder_output, beam_size)
+                nextnodes = []
+
+                for new_k in range(beam_size):
+                    decoded_t = indexes[0][new_k].view(-1)
+                    log_p = log_prob[0][new_k].item()
+
+                    node = BeamSearchNode(
+                        decoder_hidden, n, decoded_t, n.logp + log_p, n.leng + 1)
+                    score = -node.eval()
+                    nextnodes.append((score, node))
+
+                # put them into queue
+                for i in range(len(nextnodes)):
+                    score, nn = nextnodes[i]
+                    nodes.put((score, nn))
+                    # increase qsize
+                qsize += len(nextnodes) - 1
+
+            # choose nbest paths, back trace them
+            if len(endnodes) == 0:
+                endnodes = [nodes.get() for _ in range(topk)]
+
+            utterances = []
+            for score, n in sorted(endnodes, key=operator.itemgetter(0)):
+                utterance = []
+                utterance.append(n.wordid)
+                # back trace
+                while n.prevNode != None:
+                    n = n.prevNode
+                    utterance.append(n.wordid)
+
+                utterance = utterance[::-1]
+                utterances.append(utterance)
+
+            decoded_batch.append(utterances)
+
+        return decoded_batch
+
+
+class BeamSearchNode(object):
+    def __init__(self, hiddenstate, previousNode, wordId, logProb, length):
+        '''
+        :param hiddenstate:
+        :param previousNode:
+        :param wordId:
+        :param logProb:
+        :param length:
+        '''
+        self.h = hiddenstate
+        self.prevNode = previousNode
+        self.wordid = wordId
+        self.logp = logProb
+        self.leng = length
+
+    def eval(self, alpha=1.0):
+        reward = 0
+        # Add here a function for shaping a reward
+
+        return self.logp / float(self.leng - 1 + 1e-6) + alpha * reward
+
+    def __lt__(self, other):
+        return self.leng < other.leng
+
+    def __gt__(self, other):
+        return self.leng > other.leng
 
 
 class MNTModel():
@@ -155,7 +335,7 @@ class MNTModel():
         self.device = device
 
     def train_epoch(self, n_epochs, train_iter, val_iter, save_model_path):
-        reporter = Reporter("logs", "mnt_envi")
+        # reporter = Reporter("logs", "mnt_envi")
         for e in range(1, n_epochs+1):
             start_time = time.time()
             train_loss = self.train(e, train_iter)
@@ -166,7 +346,7 @@ class MNTModel():
                 break
             print((f"Epoch: {e}, Train loss: {train_loss:.3f}, Val loss: {val_loss:.3f}, "
                    f"Epoch time = {(end_time - start_time):.3f}s"))
-            reporter.log_metric("val_loss", float(val_loss), e)
+            # reporter.log_metric("val_loss", float(val_loss), e)
 
             # Save the model if the validation loss is the best we've seen so far.
             if not self.best_val_loss or val_loss < self.best_val_loss:
@@ -187,7 +367,7 @@ class MNTModel():
             for src, trg in tepoch:
                 tepoch.set_description(f"Epoch {e}")
 
-                src, trg = src.to(self.device), trg.to(self.device)
+                src, trg = src.to(self.device), trg.to(self.device)  # TxB
                 self.optimizer.zero_grad()
                 output = self.seq2seq(src, trg)
                 loss = F.nll_loss(output[1:].view(-1, self.trg_size),
@@ -217,25 +397,13 @@ class MNTModel():
                 total_loss += loss.data.item()
             return total_loss / len(val_iter)
 
-    def lazyload(self, path):
-        self.seq2seq.load_state_dict(torch.load(path)['model_state_dict'])
+    def eval(self):
+        self.seq2seq.eval()
 
+    def lazyload(self, path, device):
+        self.seq2seq.load_state_dict(torch.load(
+            path, map_location=device)['model_state_dict'])
 
-    def forward_encoder(self, src):
-        encoder_output, hidden = self.encoder(src)  # T*B*H
-        return encoder_output, hidden
-    
-    def expand_memory(self, memory, beam_size):
-        memory = memory.repeat(1, beam_size, 1)
-        return memory
-    
-    def forward_decoder(self, output, hidden, encoder_output):
-        output, hidden, attn_weights = self.decoder(
-                output, hidden, encoder_output)        
-#        output = rearrange(output, 't n e -> n t e')
-        output = output.transpose(0, 1)
-
-        return output, hidden
 
 class EarlyStopping():
     """
@@ -269,106 +437,3 @@ class EarlyStopping():
             if self.counter >= self.patience:
                 print('INFO: Early stopping')
                 self.early_stop = True
-
-class Beam:
-
-    def __init__(self, beam_size=8, min_length=0, n_top=1, ranker=None,
-                 start_token_id=2, end_token_id=3):
-        self.beam_size = beam_size
-        self.min_length = min_length
-        self.ranker = ranker
-
-        self.end_token_id = end_token_id
-        self.top_sentence_ended = False
-
-        self.prev_ks = []
-        self.next_ys = [torch.LongTensor(beam_size).fill_(start_token_id)] # remove padding
-
-        self.current_scores = torch.FloatTensor(beam_size).zero_()
-        self.all_scores = []
-
-        # Time and k pair for finished.
-        self.finished = []
-        self.n_top = n_top
-
-        self.ranker = ranker
-
-    def advance(self, next_log_probs):
-        # next_probs : beam_size X vocab_size
-
-        vocabulary_size = next_log_probs.size(1)
-        # current_beam_size = next_log_probs.size(0)
-
-        current_length = len(self.next_ys)
-        if current_length < self.min_length:
-            for beam_index in range(len(next_log_probs)):
-                next_log_probs[beam_index][self.end_token_id] = -1e10
-
-        if len(self.prev_ks) > 0:
-            beam_scores = next_log_probs + self.current_scores.unsqueeze(1).expand_as(next_log_probs)
-            # Don't let EOS have children.
-            last_y = self.next_ys[-1]
-            for beam_index in range(last_y.size(0)):
-                if last_y[beam_index] == self.end_token_id:
-                    beam_scores[beam_index] = -1e10 # -1e20 raises error when executing
-        else:
-            beam_scores = next_log_probs[0]
-            
-        flat_beam_scores = beam_scores.view(-1)
-        top_scores, top_score_ids = flat_beam_scores.topk(k=self.beam_size, dim=0, largest=True, sorted=True)
-
-        self.current_scores = top_scores
-        self.all_scores.append(self.current_scores)
-        
-        prev_k = top_score_ids // vocabulary_size  # (beam_size, )
-        next_y = top_score_ids - prev_k * vocabulary_size  # (beam_size, )
-                
-        
-        self.prev_ks.append(prev_k)
-        self.next_ys.append(next_y)
-
-        for beam_index, last_token_id in enumerate(next_y):
-            
-            if last_token_id == self.end_token_id:
-                
-                # skip scoring
-                self.finished.append((self.current_scores[beam_index], len(self.next_ys) - 1, beam_index))
-
-        if next_y[0] == self.end_token_id:
-            self.top_sentence_ended = True
-
-    def get_current_state(self):
-        "Get the outputs for the current timestep."
-        return torch.stack(self.next_ys, dim=1)
-
-    def get_current_origin(self):
-        "Get the backpointers for the current timestep."
-        return self.prev_ks[-1]
-
-    def done(self):
-        return self.top_sentence_ended and len(self.finished) >= self.n_top
-
-    def get_hypothesis(self, timestep, k):
-        hypothesis = []
-        for j in range(len(self.prev_ks[:timestep]) - 1, -1, -1):
-            hypothesis.append(self.next_ys[j + 1][k])
-            # for RNN, [:, k, :], and for trnasformer, [k, :, :]
-            k = self.prev_ks[j][k]
-
-        return hypothesis[::-1]
-
-    def sort_finished(self, minimum=None):
-        if minimum is not None:
-            i = 0
-            # Add from beam until we have minimum outputs.
-            while len(self.finished) < minimum:
-                # global_scores = self.global_scorer.score(self, self.scores)
-                # s = global_scores[i]
-                s = self.current_scores[i]
-                self.finished.append((s, len(self.next_ys) - 1, i))
-                i += 1
-
-        self.finished = sorted(self.finished, key=lambda a: a[0], reverse=True)
-        scores = [sc for sc, _, _ in self.finished]
-        ks = [(t, k) for _, t, k in self.finished]
-        return scores, ks

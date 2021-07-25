@@ -35,6 +35,8 @@ class ReadConfig():
         self.path_model = cfg['model']['save']
         self.max_len = cfg['params']['max_len']
         self.beamsearch = cfg['predictor']['beamsearch']
+        self.beam_size = cfg['predictor']['beam_size']
+
 
     def read_config(self, path="config/config_model.yaml", print=False):
         path_cur = os.path.dirname(os.path.abspath(__file__))  # project path
@@ -74,8 +76,10 @@ class ReadData():
         self.data = []
 
     def read_data(self, src_tokenizer=en_tokenizer, trg_tokenizer=vi_tokenizer):
-        raw_src_iter = iter(open(self.srcpath, 'r', encoding="utf8"))
-        raw_trg_iter = iter(open(self.trgpath, 'r', encoding="utf8"))
+        raw_src_iter = iter(
+            open(self.srcpath, 'r', encoding="utf8", errors='ignore'))
+        raw_trg_iter = iter(
+            open(self.trgpath, 'r', encoding="utf8", errors='ignore'))
         for (raw_src, raw_trg) in tqdm(zip(raw_src_iter, raw_trg_iter)):
             raw_src = src_tokenizer(preprocess(raw_src.rstrip("\n")))
             raw_trg = trg_tokenizer(preprocess(raw_trg.rstrip("\n")))
@@ -154,8 +158,8 @@ class ProcessData():
             if train:
                 vocabinit.build_vocab(datainit.data)
                 print("[Saving] Vocabulary...")
-                if not os.path.isdir("data/vocab"):
-                    os.makedirs("data/vocab")
+                if not os.path.isdir('/'.join(src_vocab_dir.split('/')[:-1])):
+                    os.makedirs('/'.join(src_vocab_dir.split('/')[:-1]))
                 vocabinit.save_vocab(src_vocab_dir, trg_vocab_dir)
 
             else:
@@ -171,8 +175,8 @@ class ProcessData():
 
             if save_dir:
                 print("[Saving] Processed data...")
-                if not os.path.isdir("data/processed"):
-                    os.makedirs("data/processed")
+                if not os.path.isdir('/'.join(save_dir.split('/')[:-1])):
+                    os.makedirs('/'.join(save_dir.split('/')[:-1]))
                 joblib.dump(self.data_prc, save_dir)
 
         self.vocab_src = vocabinit.vocab_src

@@ -3,8 +3,7 @@ import yaml
 from utils import *
 import torch
 import pprint
-from model import *
-#torch.inverse(matrix.cpu()).cuda()
+from model.model import *
 
 # tensorboard --logdir logs --port 6007 --host 0.0.0.0
 
@@ -13,7 +12,7 @@ def main():
     torch.manual_seed(0)
 
     path_cur = os.path.dirname(os.path.abspath(__file__))  # project path
-    with open(os.path.join(path_cur, "config/config_model.yaml")) as fp:
+    with open(os.path.join(path_cur, "config/config_mdl_sml.yaml")) as fp: # win "\"| linux "/"
         config = yaml.load(fp, Loader=yaml.FullLoader)
         pp = pprint.PrettyPrinter(indent=2)
         pp.pprint(config)
@@ -68,9 +67,9 @@ def main():
                      learning_rate=hyperparams_[
                          'learning_rate'],
                      grad_clip=hyperparams_['grad_clip'], patience=model_['patience'], min_delta=model_['min_delta'])
-    # model.train_epoch(n_epochs=hyperparams_['epochs'], train_iter=trainprocess.data_iter, val_iter=validprocess.data_iter,
-     #                 save_model_path=model_['save'])
-    model.lazyload(model_['save'])
+    model.train_epoch(n_epochs=hyperparams_['epochs'], train_iter=trainprocess.data_iter, val_iter=validprocess.data_iter,
+                     save_model_path=model_['save'])
+    model.lazyload(model_['save'], device)
     test_loss = model.evaluate(val_iter=testprocess.data_iter)
     print("[TEST] loss:%5.2f" % test_loss)
 
