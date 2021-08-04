@@ -59,7 +59,10 @@ instance/
 .webassets-cache
 
 
-data/*
+data/processed
+data/raw
+data/vocab
+
 logs/*
 save/*
 model.zip

@@ -6,6 +6,7 @@ This implementation focuses on the following features:
 - Modular structure to be used in other projects
 - Minimal code for readability
 - Full utilization of batches and GPU.
+- Provide beam-search
 
 This implementation relies on [torchtext](https://github.com/pytorch/text) to minimize dataset management and preprocessing parts.
 
@@ -17,20 +18,18 @@ This implementation relies on [torchtext](https://github.com/pytorch/text) to mi
 
 ![](http://www.wildml.com/wp-content/uploads/2015/12/Screen-Shot-2015-12-30-at-1.16.08-PM.png)
 
-## Requirements
+## How to run
 
-* Python3
-* PyTorch
-* torchtext
-* Spacy
-* numpy
-refer to envname.yaml
-download tokenizers by doing so:
+* conda create new environment refer to [file](requirements.txt)
+
+* Download tokenizers of English:
 ```
 python -m spacy download en_core_web_sm
 ```
-
+* Remember to modify [config file](config/config_mdl_sml.yaml) before running
+```
 CUDA_VISIBLE_DEVICES=1 python train.py
+```
 ## References
 
 Based on the following implementations
