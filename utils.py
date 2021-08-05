@@ -18,8 +18,8 @@ PAD_IDX = 1
 
 
 class ReadConfig():
-    def __init__(self):
-        cfg = self.read_config()
+    def __init__(self, path, print):
+        cfg = self.read_config(print= print,path=path)
         self.vocab_size = cfg['params']['vocab_size']
         self.data_src = cfg['data']['src']
         self.data_trg = cfg['data']['trg']
@@ -45,7 +45,7 @@ class ReadConfig():
         self.epochs = cfg['hyperparams']['epochs']
         self.batch_size = cfg['hyperparams']['batch_size']
         self.N = cfg['model']['transformer']['N']
-        
+
     def read_config(self, path="config/config_mdl_sml.yaml", print=False):
         path_cur = os.path.dirname(os.path.abspath(__file__))  # project path
         with open(os.path.join(path_cur, path)) as fp:

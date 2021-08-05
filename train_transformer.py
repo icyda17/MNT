@@ -8,8 +8,7 @@ import time
 
 def main():
     torch.manual_seed(0)
-    config = ReadConfig()
-    config.read_config(path="config/config_mdl_sml.yaml", print=True)
+    config = ReadConfig(path="config/config_mdl_sml.yaml", print=True)
     path_cur = os.path.dirname(os.path.abspath(__file__))  # project path
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
