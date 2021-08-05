@@ -14,7 +14,7 @@ class Predictor():
                             cfg.hidden_size, cfg.n_layers_encoder, cfg.n_layers_decoder,
                             cfg.dropout_encoder, cfg.dropout_decoder, self.device, cfg.teacher_forcing_ratio,
                             cfg.learning_rate, cfg.grad_clip, cfg.patience, cfg.min_delta)
-        self.MNT.lazyload(cfg.path_model, device)
+        self.MNT.lazyload(cfg.path_model_gru, device)
         # self.MNT.seq2seq.eval()
         print("Load model!")
         self.max_len = cfg.max_len

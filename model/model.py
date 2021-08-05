@@ -11,7 +11,6 @@ import time
 # from reporter import Reporter
 import os
 from tqdm import tqdm
-from util.log import timeit
 from queue import PriorityQueue
 import operator
 

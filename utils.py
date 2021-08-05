@@ -14,13 +14,17 @@ import pprint
 from torch.nn.utils.rnn import pad_sequence
 
 en_tokenizer = get_tokenizer('spacy', language='en_core_web_sm')
+PAD_IDX = 1
 
 
 class ReadConfig():
     def __init__(self):
         cfg = self.read_config()
         self.vocab_size = cfg['params']['vocab_size']
+        self.data_src = cfg['data']['src']
+        self.data_trg = cfg['data']['trg']
         self.src_vocab_dir, self.trg_vocab_dir = cfg['data']['vocab']
+        self.processed_data = cfg['data']['processed']
         self.embed_size = cfg['params']['embed_size']
         self.hidden_size = cfg['params']['hidden_size']
         self.n_layers_encoder = cfg['model']['encoder']['n_layers']
@@ -32,13 +36,17 @@ class ReadConfig():
         self.grad_clip = cfg['hyperparams']['grad_clip']
         self.patience = cfg['model']['patience']
         self.min_delta = cfg['model']['min_delta']
-        self.path_model = cfg['model']['save']
+        self.path_model_gru = cfg['model']['seq2seq']['save']
+        self.path_model_transformer = cfg['model']['transformer']['save']
         self.max_len = cfg['params']['max_len']
         self.beamsearch = cfg['predictor']['beamsearch']
         self.beam_size = cfg['predictor']['beam_size']
-
-
-    def read_config(self, path="config/config_model.yaml", print=False):
+        self.n_head = cfg['model']['transformer']['nhead']
+        self.epochs = cfg['hyperparams']['epochs']
+        self.batch_size = cfg['hyperparams']['batch_size']
+        self.N = cfg['model']['transformer']['N']
+        
+    def read_config(self, path="config/config_mdl_sml.yaml", print=False):
         path_cur = os.path.dirname(os.path.abspath(__file__))  # project path
         with open(os.path.join(path_cur, path)) as fp:
             config = yaml.load(fp, Loader=yaml.FullLoader)
@@ -200,3 +208,23 @@ class ProcessData():
         trg_batch = pad_sequence(
             trg_batch, padding_value=self.vocab_trg['<pad>'])
         return src_batch, trg_batch
+
+
+def generate_square_subsequent_mask(sz, device):
+    mask = (torch.triu(torch.ones((sz, sz), device=device)) == 1).transpose(0, 1)
+    mask = mask.float().masked_fill(mask == 0, float(
+        '-inf')).masked_fill(mask == 1, float(0.0))
+    return mask
+
+
+def create_mask(src, tgt, device):
+    src_seq_len = src.shape[0]
+    tgt_seq_len = tgt.shape[0]
+
+    tgt_mask = generate_square_subsequent_mask(tgt_seq_len, device)
+    src_mask = torch.zeros((src_seq_len, src_seq_len),
+                           device=device).type(torch.bool)
+
+    src_padding_mask = (src == PAD_IDX).transpose(0, 1)
+    tgt_padding_mask = (tgt == PAD_IDX).transpose(0, 1)
+    return src_mask, tgt_mask, src_padding_mask, tgt_padding_mask
